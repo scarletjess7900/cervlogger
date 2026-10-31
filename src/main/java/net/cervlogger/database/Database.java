@@ -49,20 +49,11 @@ public final class Database {
         synchronized (LOCK) {
             if (mysql) {
                 databaseFile = null;
-                Properties props = new Properties();
-                props.setProperty("user", ConfigHandler.mysqlUsername);
-                props.setProperty("password", ConfigHandler.mysqlPassword);
-                String url = "jdbc:mysql://" + ConfigHandler.mysqlHost + ":" + ConfigHandler.mysqlPort + "/" + ConfigHandler.mysqlDatabase
-                        + "?useUnicode=true&characterEncoding=utf8&autoReconnect=true&useSSL=false&allowPublicKeyRetrieval=true";
-                // Instantiate the driver directly: Class.forName + DriverManager fail under
-                // FML module isolation (DriverManager skips drivers from other classloaders).
-                connection = new com.mysql.cj.jdbc.Driver().connect(url, props);
             }
             else {
                 databaseFile = ConfigHandler.dataDir().resolve("database.db");
-                // Direct factory call instead of Class.forName + DriverManager (see above).
-                connection = org.sqlite.JDBC.createConnection("jdbc:sqlite:" + databaseFile.toAbsolutePath(), new Properties());
             }
+            connection = createConnection();
             String pk = mysql ? "rowid BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY" : "rowid INTEGER PRIMARY KEY AUTOINCREMENT";
             String str = mysql ? "VARCHAR(255)" : "TEXT";
             try (Statement st = connection.createStatement()) {
@@ -108,8 +99,56 @@ public final class Database {
         return connection;
     }
 
+    /**
+     * Returns a live connection, attempting a single reconnect if the current one
+     * is closed or unreachable. Must be called under {@link #lock()}.
+     * Throws {@link SQLException} if the reconnect attempt fails.
+     */
+    public static Connection ensureConnection() throws SQLException {
+        if (connection != null) {
+            if (isConnected()) {
+                return connection;
+            }
+            CervLogger.LOGGER.warn("[CervLogger] Database connection lost, attempting to reconnect to {}", description());
+            try {
+                connection.close();
+            }
+            catch (SQLException ignored) {
+            }
+            connection = null;
+        }
+        connection = createConnection();
+        return connection;
+    }
+
+    /** Opens a new connection to the configured storage backend. */
+    private static Connection createConnection() throws SQLException {
+        if (mysql) {
+            Properties props = new Properties();
+            props.setProperty("user", ConfigHandler.mysqlUsername);
+            props.setProperty("password", ConfigHandler.mysqlPassword);
+            String url = "jdbc:mysql://" + ConfigHandler.mysqlHost + ":" + ConfigHandler.mysqlPort + "/" + ConfigHandler.mysqlDatabase
+                    + "?useUnicode=true&characterEncoding=utf8&autoReconnect=true&useSSL=false&allowPublicKeyRetrieval=true";
+            // Instantiate the driver directly: Class.forName + DriverManager fail under
+            // FML module isolation (DriverManager skips drivers from other classloaders).
+            return new com.mysql.cj.jdbc.Driver().connect(url, props);
+        }
+        // Direct factory call instead of Class.forName + DriverManager (see above).
+        return org.sqlite.JDBC.createConnection("jdbc:sqlite:" + databaseFile.toAbsolutePath(), new Properties());
+    }
+
     public static boolean isReady() {
         return connection != null;
+    }
+
+    /** True if the current connection is open and passes a validity check. Must be called under {@link #lock()}. */
+    public static boolean isConnected() {
+        try {
+            return connection != null && !connection.isClosed() && connection.isValid(2);
+        }
+        catch (SQLException e) {
+            return false;
+        }
     }
 
     public static Path databaseFile() {

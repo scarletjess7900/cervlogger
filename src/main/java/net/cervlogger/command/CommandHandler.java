@@ -38,6 +38,7 @@ import net.minecraft.world.entity.Entity;
  *   /cl restore <params> | /cl rs
  *   /cl near                      - lookup within 5 blocks
  *   /cl purge t:<time>            - delete old data
+ *   /cl reconnect                 - reconnect to the database
  *   /cl status                    - version + queue + database info
  */
 public final class CommandHandler {
@@ -97,6 +98,10 @@ public final class CommandHandler {
                             return 1;
                         })));
         root.then(paramsNode("structures", CommandHandler::structures));
+        root.then(Commands.literal("reconnect").requires(ADMIN).executes(ctx -> {
+            reconnect(ctx.getSource());
+            return 1;
+        }));
         root.then(Commands.literal("status").requires(ADMIN).executes(ctx -> {
             status(ctx.getSource());
             return 1;
@@ -150,6 +155,7 @@ public final class CommandHandler {
         sendHelpLine(source, "/cl near [radius]", "Lookup nearby (default radius 5).");
         sendHelpLine(source, "/cl structures [r:<radius>]", "List loaded contraptions/physics structures.");
         sendHelpLine(source, "/cl purge t:<time>", "Delete old data.");
+        sendHelpLine(source, "/cl reconnect", "Reconnect to the database.");
         sendHelpLine(source, "/cl status", "View the mod status.");
         Chat.send(source, Chat.text("Params: ", ChatFormatting.DARK_AQUA)
                 .append(Chat.text("u:<user> t:<time> r:<radius|#global> a:<action> b:<blocks> e:<exclude> w:<world> p:<page>", ChatFormatting.GRAY)));
@@ -389,6 +395,23 @@ public final class CommandHandler {
         }, "CervLogger-Purge");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private static void reconnect(CommandSourceStack source) {
+        synchronized (Database.lock()) {
+            try {
+                if (Database.isConnected()) {
+                    Chat.sendPrefixed(source, Chat.text("Database is already connected.", ChatFormatting.YELLOW));
+                    return;
+                }
+                Database.ensureConnection();
+                Chat.sendPrefixed(source, Chat.text("Reconnected to " + Database.description() + ".", ChatFormatting.GREEN));
+            }
+            catch (Exception e) {
+                CervLogger.LOGGER.error("[CervLogger] Manual reconnect failed", e);
+                Chat.sendPrefixed(source, Chat.text("Failed to reconnect to database.", ChatFormatting.RED));
+            }
+        }
     }
 
     private static void status(CommandSourceStack source) {

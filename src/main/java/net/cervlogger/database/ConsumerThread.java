@@ -11,8 +11,8 @@ import net.cervlogger.CervLogger;
 
 /**
  * Asynchronous database consumer, mirroring CervLogger's consumer design:
- * listeners enqueue lightweight tasks, and this thread writes them to SQLite
- * in batched transactions off the main server thread.
+ * listeners enqueue lightweight tasks, and this thread writes them to the
+ * database in batched transactions off the main server thread.
  */
 public final class ConsumerThread implements Runnable {
 
@@ -86,8 +86,12 @@ public final class ConsumerThread implements Runnable {
 
     private static void process(List<DbTask> batch) {
         synchronized (Database.lock()) {
-            Connection connection = Database.connection();
-            if (connection == null) {
+            Connection connection;
+            try {
+                connection = Database.ensureConnection();
+            }
+            catch (Exception e) {
+                CervLogger.LOGGER.error("[CervLogger] Failed to reconnect to database, dropping batch", e);
                 return;
             }
             try {
